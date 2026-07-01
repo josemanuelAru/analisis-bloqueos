@@ -6,7 +6,7 @@ import plotly.express as px
 st.set_page_config(page_title="Insights Hub Dashboard", layout="wide", page_icon="📊")
 
 st.title("📊 Dashboard Interactivo de Insights Hub")
-st.write("Sube tu archivo CSV para visualizar la tabla, aplicar filtros avanzados y generar gráficas interactivas dinámicas.")
+st.write("Sube tu archivo CSV para visualizar la tabla, aplicar filtros avanzados y comparar múltiples variables en las gráficas.")
 
 # Contenedor para subir el archivo CSV
 uploaded_file = st.file_uploader("Elige tu archivo CSV", type=["csv"])
@@ -49,7 +49,6 @@ if uploaded_file is not None:
             min_date = df['Date_Parsed'].min().date()
             max_date = df['Date_Parsed'].max().date()
             date_range = st.sidebar.date_input("Rango de fechas:", [min_date, max_date], min_value=min_date, max_value=max_date)
-            # Controlar que se seleccionen ambas fechas (inicio y fin) antes de filtrar
             if len(date_range) == 2:
                 start_date, end_date = date_range
                 df = df[(df['Date_Parsed'].dt.date >= start_date) & (df['Date_Parsed'].dt.date <= end_date)]
@@ -60,8 +59,6 @@ if uploaded_file is not None:
         
         total_imps = df['Aftrad IMPs'].sum() if 'Aftrad IMPs' in df.columns else 0
         total_blocked = df['AF Blocked IMPs'].sum() if 'AF Blocked IMPs' in df.columns else 0
-        
-        # Calcular el porcentaje global bloqueado de la selección actual
         avg_blocked_pct = (total_blocked / total_imps) * 100 if total_imps > 0 else 0.0
             
         col1.metric("Total Aftrad IMPs", f"{total_imps:,}")
@@ -70,44 +67,68 @@ if uploaded_file is not None:
         
         # --- SECCIÓN 2: VISTA DE LA TABLA ---
         st.subheader("📋 Tabla de Datos General")
-        # Quitamos la columna técnica de fecha antes de mostrar la tabla limpia
         display_df = df.drop(columns=['Date_Parsed']) if 'Date_Parsed' in df.columns else df
         st.dataframe(display_df, use_container_width=True)
         
-        # --- SECCIÓN 3: GENERADOR DINÁMICO DE GRÁFICAS ---
+        # --- SECCIÓN 3: GENERADOR DINÁMICO DE GRÁFICAS (MULTIVARIABLE) ---
         st.subheader("📊 Generador Dinámico de Gráficas")
-        st.write("Configura las variables que deseas cruzar para analizar los datos visualmente:")
+        st.write("Configura las variables. ¡Ahora puedes seleccionar una o varias métricas en el eje Y para compararlas!")
         
         col_g1, col_g2, col_g3 = st.columns(3)
         
         columnas_disponibles = [c for c in display_df.columns]
-        columnas_numericas = [c for c in columnas_disponibles if df[c].dtype in ['int64', 'float64']]
+        # Identificar columnas numéricas aptas para sumar (excluyendo el porcentaje si se desea comparar volúmenes absolutos)
+        columnas_numericas = [c for c in columnas_disponibles if df[c].dtype in ['int64', 'float64'] and c != 'Blocked %']
         
         with col_g1:
             eje_x = st.selectbox("Eje X (Variable categórica o temporal):", options=columnas_disponibles, index=0)
         with col_g2:
-            eje_y = st.selectbox("Eje Y (Métrica numérica acumulativa):", options=columnas_numericas, index=0 if columnas_numericas else None)
-        with col_g3:
-            tipo_grafico = st.selectbox("Tipo de representación gráfica:", options=["Barras (Agrupado por Total)", "Líneas (Tendencia Temporal)", "Dispersión (Puntos Scatter)"])
+            # Cambiado a multiselect para permitir múltiples métricas en el eje Y
+            valores_defecto = [columnas_numericas[0]] if columnas_numericas else []
+            if len(columnas_numericas) > 1:
+                # Si existen ambas columnas, las ponemos por defecto para facilitar la comparación inmediata
+                valores_defecto = [c for c in ['Aftrad IMPs', 'AF Blocked IMPs'] if c in columnas_numericas]
             
-        if eje_x and eje_y:
-            if tipo_grafico == "Barras (Agrupado por Total)":
-                # Agrupar y ordenar para que las barras salgan ordenadas por volumen de mayor a menor
-                df_grouped = df.groupby(eje_x, as_index=False)[eje_y].sum().sort_values(by=eje_y, ascending=False)
-                fig = px.bar(df_grouped, x=eje_x, y=eje_y, title=f"Total de {eje_y} distribuido por {eje_x}", text_auto='.2s', color=eje_x)
+            ejes_y = st.multiselect("Eje Y (Métricas numéricas a comparar):", options=columnas_numericas, default=valores_defecto)
+        with col_g3:
+            tipo_grafico = st.selectbox("Tipo de representación gráfica:", options=["Barras Comparativas", "Líneas de Tendencia"])
+            
+        if eje_x and ejes_y:
+            # Agrupar los datos sumando las métricas seleccionadas para el eje X elegido
+            df_grouped = df.groupby(eje_x, as_index=False)[ejes_y].sum()
+            
+            # Si el eje X es la fecha, nos aseguramos de ordenarlo cronológicamente
+            if eje_x == 'Date' and 'Date_Parsed' in df.columns:
+                df_grouped['Date_Sort'] = pd.to_datetime(df_grouped['Date'], errors='coerce')
+                df_grouped = df_grouped.sort_values(by='Date_Sort').drop(columns=['Date_Sort'])
+            else:
+                # Si es categórico (ADV, AM, etc.), lo ordenamos por la primera métrica seleccionada para que se vea limpio
+                df_grouped = df_grouped.sort_values(by=ejes_y[0], ascending=False)
+            
+            if tipo_grafico == "Barras Comparativas":
+                # barmode='group' coloca las barras de las distintas métricas una al lado de la otra por cada elemento del eje X
+                fig = px.bar(
+                    df_grouped, 
+                    x=eje_x, 
+                    y=ejes_y, 
+                    title=f"Comparativa de métricas distribuidas por {eje_x}",
+                    barmode='group',
+                    labels={"value": "Cantidad Total", "variable": "Métrica"}
+                )
                 st.plotly_chart(fig, use_container_width=True)
                 
-            elif tipo_grafico == "Líneas (Tendencia Temporal)":
-                df_grouped = df.groupby(eje_x, as_index=False)[eje_y].sum()
-                if eje_x == 'Date' and 'Date_Parsed' in df.columns:
-                    df_grouped['Date_Sort'] = pd.to_datetime(df_grouped['Date'], errors='coerce')
-                    df_grouped = df_grouped.sort_values(by='Date_Sort')
-                fig = px.line(df_grouped, x=eje_x, y=eje_y, title=f"Evolución de {eje_y} a lo largo de {eje_x}", markers=True)
+            elif tipo_grafico == "Líneas de Tendencia":
+                fig = px.line(
+                    df_grouped, 
+                    x=eje_x, 
+                    y=ejes_y, 
+                    title=f"Evolución y comparativa de métricas a lo largo de {eje_x}", 
+                    markers=True,
+                    labels={"value": "Cantidad Total", "variable": "Métrica"}
+                )
                 st.plotly_chart(fig, use_container_width=True)
-                
-            elif tipo_grafico == "Dispersión (Puntos Scatter)":
-                fig = px.scatter(df, x=eje_x, y=eje_y, color='AM' if 'AM' in df.columns else None, hover_data=columnas_disponibles, title=f"Correlación/Dispersión entre {eje_y} y {eje_x}")
-                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("⚠️ Selecciona al menos una métrica en el menú del Eje Y para poder generar la gráfica.")
                 
     except Exception as e:
         st.error(f"Se ha producido un error al procesar la estructura del CSV: {e}")
