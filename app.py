@@ -4,11 +4,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# Configuración de la página en formato ancho
+# Configuración de la página en formato ancho para aprovechar la pantalla
 st.set_page_config(page_title="Insights Hub Dashboard", layout="wide", page_icon="📊")
 
 st.title("📊 Dashboard Interactivo de Insights Hub")
-st.write("Sube tu archivo CSV para visualizar la tabla, aplicar filtros avanzados (incluyendo App ID) y comparar variables con escalas independientes.")
+st.write("Sube tu archivo CSV para visualizar la tabla, aplicar filtros avanzados (incluyendo PID y Fechas) y comparar variables con escalas independientes.")
 
 # Contenedor para subir el archivo CSV
 uploaded_file = st.file_uploader("Elige tu archivo CSV", type=["csv"])
@@ -28,37 +28,51 @@ if uploaded_file is not None:
         # --- SIDEBAR / BARRA LATERAL DE FILTROS ---
         st.sidebar.header("🔍 Filtros de Datos")
         
-        # Filtro por Account Manager (AM)
+        # 1. Filtro por Account Manager (AM)
         if 'AM' in df.columns:
             lista_am = df['AM'].dropna().unique().tolist()
             selected_am = st.sidebar.multiselect("Filtrar por AM:", options=lista_am, default=lista_am)
             df = df[df['AM'].isin(selected_am)]
             
-        # Filtro por Anunciante (ADV)
+        # 2. Filtro por Anunciante (ADV)
         if 'ADV' in df.columns:
             lista_adv = df['ADV'].dropna().unique().tolist()
             selected_adv = st.sidebar.multiselect("Filtrar por ADV (Anunciante):", options=lista_adv, default=lista_adv)
             df = df[df['ADV'].isin(selected_adv)]
             
-        # NUEVO: Filtro por App ID
+        # 3. Filtro por App ID
         if 'App ID' in df.columns:
-            # Convertimos a string por si acaso vienen identificadores puramente numéricos
             df['App ID'] = df['App ID'].astype(str)
             lista_appid = df['App ID'].dropna().unique().tolist()
             selected_appid = st.sidebar.multiselect("Filtrar por App ID:", options=lista_appid, default=lista_appid)
             df = df[df['App ID'].isin(selected_appid)]
             
-        # Filtro por Agencia (Agency)
+        # 4. NUEVO: Filtro por PID
+        if 'PID' in df.columns:
+            df['PID'] = df['PID'].astype(str)
+            lista_pid = df['PID'].dropna().unique().tolist()
+            selected_pid = st.sidebar.multiselect("Filtrar por PID:", options=lista_pid, default=lista_pid)
+            df = df[df['PID'].isin(selected_pid)]
+            
+        # 5. Filtro por Agencia (Agency)
         if 'Agency' in df.columns:
             lista_agency = df['Agency'].dropna().unique().tolist()
             selected_agency = st.sidebar.multiselect("Filtrar por Agencia:", options=lista_agency, default=lista_agency)
             df = df[df['Agency'].isin(selected_agency)]
             
-        # Filtro por Rango de Fechas
+        # 6. Filtro por Rango de Fechas (Optimizado)
         if 'Date' in df.columns and not df['Date_Parsed'].isnull().all():
             min_date = df['Date_Parsed'].min().date()
             max_date = df['Date_Parsed'].max().date()
-            date_range = st.sidebar.date_input("Rango de fechas:", [min_date, max_date], min_value=min_date, max_value=max_date)
+            
+            # Selector de rango de fechas para el usuario
+            date_range = st.sidebar.date_input(
+                "Rango de fechas:", 
+                [min_date, max_date], 
+                min_value=min_date, 
+                max_value=max_date
+            )
+            # Solo aplica el filtro si el usuario ha seleccionado tanto fecha de inicio como de fin
             if len(date_range) == 2:
                 start_date, end_date = date_range
                 df = df[(df['Date_Parsed'].dt.date >= start_date) & (df['Date_Parsed'].dt.date <= end_date)]
@@ -98,6 +112,7 @@ if uploaded_file is not None:
             tipo_grafico = st.selectbox("Tipo de representación gráfica:", options=["Líneas de Tendencia", "Barras Comparativas"])
             
         if eje_x and ejes_y:
+            # Usar media para porcentajes y suma para volúmenes absolutos
             agg_dict = {metrica: ('mean' if 'percent' in metrica.lower() or '%' in metrica else 'sum') for metrica in ejes_y}
             df_grouped = df.groupby(eje_x, as_index=False).agg(agg_dict)
             
